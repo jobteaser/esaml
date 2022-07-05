@@ -53,3 +53,7 @@ You can also tap straight into lower-level APIs in `esaml` if `esaml_cowboy` doe
 This is particularly useful if you want to implement SOAP endpoints using SAML.
 
 > The Elixir library `Samly` is one such implementation. It dose not use `esaml_cowboy`. Instead it relies on the lower-level APIs and uses Elixir `Plug` and `Cowboy` directly for endpoints/routing.
+
+## Why Jobteaser Forked this repo
+
+For many reason, we want to change the way `esaml` maps the final payload. While `dropbox` did some good updates, they are not really active on the repo anymore. 
