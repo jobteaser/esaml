@@ -168,8 +168,9 @@ verify(Element, Fingerprints) ->
     case xmerl_xpath:string("ds:Signature/ds:SignedInfo/ds:SignatureMethod/@Algorithm", Element, [{namespace, DsNs}]) of
         [] ->
             {error, no_signature};
+
         [#xmlAttribute{value = SignatureMethodAlgorithm}] ->
-            {HashFunction, _, _} = signature_props(SignatureMethodAlgorithm),
+            {HashFunction, _, SignatureUrl} = signature_props(SignatureMethodAlgorithm),
 
             [#xmlAttribute{value = "http://www.w3.org/2001/10/xml-exc-c14n#"}] = xmerl_xpath:string("ds:Signature/ds:SignedInfo/ds:CanonicalizationMethod/@Algorithm", Element, [{namespace, DsNs}]),
             [#xmlAttribute{value = SignatureMethodAlgorithm}] = xmerl_xpath:string("ds:Signature/ds:SignedInfo/ds:SignatureMethod/@Algorithm", Element, [{namespace, DsNs}]),
@@ -202,12 +203,15 @@ verify(Element, Fingerprints) ->
                 CertHash = crypto:hash(sha, CertBin),
                 CertHash2 = crypto:hash(sha256, CertBin),
 
-                Cert = public_key:pkix_decode_cert(CertBin, plain),
-                KeyBin = case Cert#'Certificate'.tbsCertificate#'TBSCertificate'.subjectPublicKeyInfo#'SubjectPublicKeyInfo'.subjectPublicKey of
-                  {_, KeyBin2} -> KeyBin2;
-                  KeyBin3 -> KeyBin3
+                Key = case SignatureUrl of
+                    "https://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256" ->
+                        extract_ec_key(CertBin);
+
+                    _ ->
+                        Cert = public_key:pkix_decode_cert(CertBin, plain),
+                        {_, KeyBin} = Cert#'Certificate'.tbsCertificate#'TBSCertificate'.subjectPublicKeyInfo#'SubjectPublicKeyInfo'.subjectPublicKey,
+                        public_key:pem_entry_decode({'RSAPublicKey', KeyBin, not_encrypted})
                 end,
-                Key = public_key:pem_entry_decode({'RSAPublicKey', KeyBin, not_encrypted}),
 
                 case public_key:verify(Data, HashFunction, Sig, Key) of
                     true ->
@@ -229,6 +233,23 @@ verify(Element, Fingerprints) ->
         _ ->
             {error, multiple_signatures}
     end.
+
+-spec extract_ec_key(CertBin :: binary()) -> {#'ECPoint'{}, any()}.
+extract_ec_key(CertBin) ->
+    %% Decipher the public key
+    [{_, DerCert, _}] = public_key:pem_decode(CertBin),
+    %% OTPCertificate = public_key:pkix_decode_cert(DerCert, otp),
+    %% Der = OTPCertificate#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'.subjectPublicKeyInfo#'OTPSubjectPublicKeyInfo'.algorithm,
+
+    OTPCertificate = public_key:pkix_decode_cert(DerCert, otp),
+    SubjectPublicKeyInfo = OTPCertificate#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'.subjectPublicKeyInfo,
+
+     #'OTPSubjectPublicKeyInfo'{
+        subjectPublicKey = ECPoint,
+        algorithm = #'PublicKeyAlgorithm'{ parameters = Params }
+    } = SubjectPublicKeyInfo,
+
+    {ECPoint, Params}.
 
 %% @doc Verifies an XML digital signature, trusting any valid certificate.
 %%
@@ -252,6 +273,13 @@ signature_props(rsa_sha256) ->
     HashFunction = sha256,
     DigestMethod = "http://www.w3.org/2001/04/xmlenc#sha256",
     Url = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+    {HashFunction, DigestMethod, Url};
+signature_props("https://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256") ->
+    signature_props(ecdsa_sha256);
+signature_props(ecdsa_sha256) ->
+    HashFunction = sha256,
+    DigestMethod = "http://www.w3.org/2001/04/xmlenc#sha256",
+    Url = "https://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256",
     {HashFunction, DigestMethod, Url}.
 
 -ifdef(TEST).
