@@ -274,9 +274,7 @@ signature_props(rsa_sha256) ->
     DigestMethod = "http://www.w3.org/2001/04/xmlenc#sha256",
     Url = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
     {HashFunction, DigestMethod, Url};
-signature_props("https://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256") ->
-    signature_props(ecdsa_sha256);
-signature_props('https://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256') ->
+signature_props("http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256") ->
     signature_props(ecdsa_sha256);
 signature_props(ecdsa_sha256) ->
     HashFunction = sha256,
