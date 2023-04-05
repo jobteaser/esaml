@@ -234,13 +234,8 @@ verify(Element, Fingerprints) ->
             {error, multiple_signatures}
     end.
 
--spec extract_ec_key(CertBin :: binary()) -> {#'ECPoint'{}, any()}.
-extract_ec_key(CertBin) ->
-    %% Decipher the public key
-    [{_, DerCert, _}] = public_key:pem_decode(CertBin),
-    %% OTPCertificate = public_key:pkix_decode_cert(DerCert, otp),
-    %% Der = OTPCertificate#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'.subjectPublicKeyInfo#'OTPSubjectPublicKeyInfo'.algorithm,
-
+-spec extract_ec_key(DerCert :: binary()) -> {#'ECPoint'{}, any()}.
+extract_ec_key(DerCert) ->
     OTPCertificate = public_key:pkix_decode_cert(DerCert, otp),
     SubjectPublicKeyInfo = OTPCertificate#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'.subjectPublicKeyInfo,
 
