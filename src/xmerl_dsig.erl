@@ -204,7 +204,7 @@ verify(Element, Fingerprints) ->
                 CertHash2 = crypto:hash(sha256, CertBin),
 
                 Key = case SignatureUrl of
-                    "https://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256" ->
+                    "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256" ->
                         extract_ec_key(CertBin);
 
                     _ ->
@@ -274,7 +274,7 @@ signature_props("http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256") ->
 signature_props(ecdsa_sha256) ->
     HashFunction = sha256,
     DigestMethod = "http://www.w3.org/2001/04/xmlenc#sha256",
-    Url = "https://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256",
+    Url = "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256",
     {HashFunction, DigestMethod, Url}.
 
 -ifdef(TEST).
