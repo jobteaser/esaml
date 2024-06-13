@@ -2,6 +2,9 @@
 
 All changes are in the `main` branch (`master` remains unchanged).
 
+### v4.5.0
++   Update minor version due to using non-deprecated functions which may break previously supported OTP versions, specifically `http_uri` to `uri_string` [thanks jamesvl](https://github.com/dropbox/esaml/pull/6)
+
 ### v4.4.0
 +   New feature providing additional key and certificate management functions to handle inline cert/key configuration rather than relying on a file
 +   Fixes a race condition in start_ets/0
