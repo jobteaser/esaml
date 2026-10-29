@@ -374,7 +374,7 @@ decrypt_assertion_external_dtd_test() ->
     esaml_util:start_ets(),
     Key = esaml_util:load_private_key("test/selfsigned_key.pem"),
     #'RSAPrivateKey'{modulus = N, publicExponent = E} = Key,
-    AssertionXml = <<"<!DOCTYPE saml:Assertion SYSTEM \"/nonexistent/esaml.dtd\">"
+    AssertionXml = <<"<!DOCTYPE saml:Assertion SYSTEM \"/dev/null\">"
                      "<saml:Assertion xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\"/>">>,
     SymmetricKey = crypto:strong_rand_bytes(16),
     IV = crypto:strong_rand_bytes(12),

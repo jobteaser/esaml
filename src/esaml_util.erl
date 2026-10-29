@@ -234,10 +234,13 @@ do_import_certificate_chain(EncodedCerts, Identifier) ->
 %% A DTD in the document that declares no entity stays permitted.
 -spec parse_xml(string()) -> #xmlElement{}.
 parse_xml(Str) ->
-    {Xml, _} = xmerl_scan:string(Str, [{namespace_conformant, true},
-                                       {allow_entities, false},
-                                       {fetch_fun, fun(_, _) -> {error, no_external_dtd} end}]),
+    {Xml, _} = xmerl_scan:string(Str, scan_options()),
     Xml.
+
+scan_options() ->
+    [{namespace_conformant, true},
+     {allow_entities, false},
+     {fetch_fun, fun(_, _) -> {error, no_external_dtd} end}].
 
 %% @doc Reads IDP metadata from a URL (or ETS memory cache) and validates the signature
 -spec load_metadata(Url :: string(), Fingerprints :: [string() | binary()]) -> esaml:idp_metadata().
@@ -327,7 +330,7 @@ unique_id() ->
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
--define(EXTERNAL_DTD_XML, "<!DOCTYPE x SYSTEM \"/nonexistent/esaml.dtd\"><x/>").
+-define(EXTERNAL_DTD_XML, "<!DOCTYPE x SYSTEM \"/dev/null\"><x/>").
 
 fingerprints_test() ->
     [<<0:128>>] = convert_fingerprints([<<0:128>>]),
@@ -398,6 +401,11 @@ parse_xml_entity_test() ->
     ?assertExit({fatal, {{error, entities_not_allowed}, _, _, _}},
                 parse_xml("<!DOCTYPE x [<!ENTITY e \"a\">]><x>&e;</x>")).
 
+%% xmerl in OTP 29 refuses an entity by default, and xmerl in OTP 25 permits it. So on OTP 29
+%% the test above passes without the option. This test fails when the option is absent.
+scan_options_refuse_entities_test() ->
+    ?assert(lists:member({allow_entities, false}, scan_options())).
+
 load_metadata_external_dtd_test() ->
     start_ets(),
     Url = serve_once(?EXTERNAL_DTD_XML),
@@ -408,18 +416,23 @@ load_metadata_fingerprints_external_dtd_test() ->
     Url = serve_once(?EXTERNAL_DTD_XML),
     ?assertExit({fatal, {{error_fetching_DTD, _}, _, _, _}}, load_metadata(Url, [])).
 
-%% Answers one HTTP request with Body, and returns the URL.
+%% Answers one HTTP request with Body, and returns the URL. The server waits 5 seconds for
+%% the request, and then closes the listen socket in all cases.
 serve_once(Body) ->
     {ok, _} = application:ensure_all_started(inets),
     {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}, {ip, {127, 0, 0, 1}}]),
     {ok, Port} = inet:port(Listen),
-    spawn_link(fun() ->
-        {ok, Socket} = gen_tcp:accept(Listen),
-        {ok, _Request} = gen_tcp:recv(Socket, 0),
-        ok = gen_tcp:send(Socket, ["HTTP/1.1 200 OK\r\nContent-Length: ",
-                                   integer_to_list(iolist_size(Body)),
-                                   "\r\nConnection: close\r\n\r\n", Body]),
-        gen_tcp:close(Socket),
+    spawn(fun() ->
+        case gen_tcp:accept(Listen, 5000) of
+            {ok, Socket} ->
+                _ = gen_tcp:recv(Socket, 0, 5000),
+                _ = gen_tcp:send(Socket, ["HTTP/1.1 200 OK\r\nContent-Length: ",
+                                          integer_to_list(iolist_size(Body)),
+                                          "\r\nConnection: close\r\n\r\n", Body]),
+                gen_tcp:close(Socket);
+            {error, _} ->
+                ok
+        end,
         gen_tcp:close(Listen)
     end),
     "http://127.0.0.1:" ++ integer_to_list(Port) ++ "/metadata".

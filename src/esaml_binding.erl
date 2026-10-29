@@ -37,7 +37,7 @@ xml_payload_type(Xml) ->
     end.
 
 %% @doc Unpack and parse a SAMLResponse with given encoding
--spec decode_response(SAMLEncoding :: binary(), SAMLResponse :: binary()) -> #xmlDocument{}.
+-spec decode_response(SAMLEncoding :: binary(), SAMLResponse :: binary() | string()) -> #xmlElement{}.
 decode_response(?deflate, SAMLResponse) ->
 	XmlData = binary_to_list(inflate(base64:decode(SAMLResponse))),
 	Xml = esaml_util:parse_xml(XmlData),
@@ -145,7 +145,7 @@ document.getElementById('saml-req-form').submit();
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
--define(EXTERNAL_DTD_XML, <<"<!DOCTYPE x SYSTEM \"/nonexistent/esaml.dtd\"><x/>">>).
+-define(EXTERNAL_DTD_XML, <<"<!DOCTYPE x SYSTEM \"/dev/null\"><x/>">>).
 
 decode_deflated_response_external_dtd_test() ->
     Response = base64:encode(zlib:zip(?EXTERNAL_DTD_XML)),
