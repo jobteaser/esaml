@@ -13,6 +13,7 @@
 
 -include_lib("xmerl/include/xmerl.hrl").
 -define(deflate, <<"urn:oasis:names:tc:SAML:2.0:bindings:URL-Encoding:DEFLATE">>).
+-define(MAX_INFLATED_BYTES, 1000000).
 
 -type uri() :: binary() | string().
 -type html_doc() :: binary().
@@ -38,17 +39,43 @@ xml_payload_type(Xml) ->
 %% @doc Unpack and parse a SAMLResponse with given encoding
 -spec decode_response(SAMLEncoding :: binary(), SAMLResponse :: binary()) -> #xmlDocument{}.
 decode_response(?deflate, SAMLResponse) ->
-	XmlData = binary_to_list(zlib:unzip(base64:decode(SAMLResponse))),
-	{Xml, _} = xmerl_scan:string(XmlData, [{namespace_conformant, true}]),
+	XmlData = binary_to_list(inflate(base64:decode(SAMLResponse))),
+	Xml = esaml_util:parse_xml(XmlData),
     Xml;
 decode_response(_, SAMLResponse) ->
 	Data = base64:decode(SAMLResponse),
-    XmlData = case (catch zlib:unzip(Data)) of
-        {'EXIT', _} -> binary_to_list(Data);
+    XmlData = try inflate(Data) of
         Bin -> binary_to_list(Bin)
+    catch
+        error:data_error -> binary_to_list(Data)
     end,
-	{Xml, _} = xmerl_scan:string(XmlData, [{namespace_conformant, true}]),
+	Xml = esaml_util:parse_xml(XmlData),
     Xml.
+
+%% @private
+%% Inflates raw DEFLATE data, as zlib:unzip/1 does, but stops at ?MAX_INFLATED_BYTES.
+%% Data that is not deflated raises data_error.
+-spec inflate(binary()) -> binary().
+inflate(Data) ->
+    Z = zlib:open(),
+    try
+        ok = zlib:inflateInit(Z, -15),
+        inflate_chunks(Z, zlib:safeInflate(Z, Data), [], 0)
+    after
+        zlib:close(Z)
+    end.
+
+inflate_chunks(Z, {Status, Chunk}, Chunks, Size0) ->
+    Size = Size0 + iolist_size(Chunk),
+    if
+        Size > ?MAX_INFLATED_BYTES ->
+            error({inflated_response_too_large, ?MAX_INFLATED_BYTES});
+        Status =:= continue ->
+            inflate_chunks(Z, zlib:safeInflate(Z, []), [Chunks, Chunk], Size);
+        Status =:= finished ->
+            ok = zlib:inflateEnd(Z),
+            iolist_to_binary([Chunks, Chunk])
+    end.
 
 %% @doc Encode a SAMLRequest (or SAMLResponse) as an HTTP-Redirect binding
 %%
@@ -117,5 +144,24 @@ document.getElementById('saml-req-form').submit();
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+
+-define(EXTERNAL_DTD_XML, <<"<!DOCTYPE x SYSTEM \"/nonexistent/esaml.dtd\"><x/>">>).
+
+decode_deflated_response_external_dtd_test() ->
+    Response = base64:encode(zlib:zip(?EXTERNAL_DTD_XML)),
+    ?assertExit({fatal, {{error_fetching_DTD, _}, _, _, _}}, decode_response(?deflate, Response)).
+
+decode_response_external_dtd_test() ->
+    Response = base64:encode(?EXTERNAL_DTD_XML),
+    ?assertExit({fatal, {{error_fetching_DTD, _}, _, _, _}}, decode_response(<<>>, Response)).
+
+decode_response_not_deflated_test() ->
+    Response = base64:encode(<<"<x/>">>),
+    ?assertMatch(#xmlElement{name = x}, decode_response(<<>>, Response)).
+
+decode_response_too_large_test() ->
+    Response = base64:encode(zlib:zip(binary:copy(<<" ">>, 2000000))),
+    ?assertError({inflated_response_too_large, _}, decode_response(?deflate, Response)),
+    ?assertError({inflated_response_too_large, _}, decode_response(<<>>, Response)).
 
 -endif.

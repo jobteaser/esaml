@@ -21,6 +21,7 @@
 -export([load_certificate_chain/1, import_certificate_chain/2]).
 -export([load_certificate/1, import_certificate/2]).
 -export([load_metadata/2, load_metadata/1]).
+-export([parse_xml/1]).
 -export([convert_fingerprints/1]).
 -export([unique_id/0]).
 
@@ -226,6 +227,18 @@ do_import_certificate_chain(EncodedCerts, Identifier) ->
     ets:insert(esaml_certbin_cache, {Identifier, CertChain}),
     CertChain.
 
+%% @doc Parses XML from a third party, and returns the root element.
+%%
+%% The parse does not fetch an external DTD, and it refuses an entity declaration.
+%% It exits with `{fatal, Reason}' when it refuses or cannot read the document.
+%% A DTD in the document that declares no entity stays permitted.
+-spec parse_xml(string()) -> #xmlElement{}.
+parse_xml(Str) ->
+    {Xml, _} = xmerl_scan:string(Str, [{namespace_conformant, true},
+                                       {allow_entities, false},
+                                       {fetch_fun, fun(_, _) -> {error, no_external_dtd} end}]),
+    Xml.
+
 %% @doc Reads IDP metadata from a URL (or ETS memory cache) and validates the signature
 -spec load_metadata(Url :: string(), Fingerprints :: [string() | binary()]) -> esaml:idp_metadata().
 load_metadata(Url, FPs) ->
@@ -234,7 +247,7 @@ load_metadata(Url, FPs) ->
         [{Url, Meta}] -> Meta;
         _ ->
             {ok, {{_Ver, 200, _}, _Headers, Body}} = httpc:request(get, {Url, []}, [{autoredirect, true}, {timeout, 3000}], []),
-            {Xml, _} = xmerl_scan:string(Body, [{namespace_conformant, true}]),
+            Xml = parse_xml(Body),
             case xmerl_dsig:verify(Xml, Fingerprints) of
                 ok -> ok;
                 Err -> error(Err)
@@ -252,7 +265,7 @@ load_metadata(Url) ->
         _ ->
             Timeout = application:get_env(esaml, load_metadata_timeout, 15000),
             {ok, {{_Ver, 200, _}, _Headers, Body}} = httpc:request(get, {Url, []}, [{autoredirect, true}, {timeout, Timeout}], []),
-            {Xml, _} = xmerl_scan:string(Body, [{namespace_conformant, true}]),
+            Xml = parse_xml(Body),
             {ok, Meta = #esaml_idp_metadata{}} = esaml:decode_idp_metadata(Xml),
             ets:insert(esaml_idp_meta_cache, {Url, Meta}),
             Meta
@@ -313,6 +326,8 @@ unique_id() ->
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+
+-define(EXTERNAL_DTD_XML, "<!DOCTYPE x SYSTEM \"/nonexistent/esaml.dtd\"><x/>").
 
 fingerprints_test() ->
     [<<0:128>>] = convert_fingerprints([<<0:128>>]),
@@ -378,6 +393,36 @@ bad_cert_load_test() ->
     CertPath = "test/bad_data.pem",
     ?assertException(error, {badmatch, []}, load_certificate(CertPath)),
     ?assertEqual([{CertPath, []}], ets:lookup(esaml_certbin_cache, CertPath)).
+
+parse_xml_entity_test() ->
+    ?assertExit({fatal, {{error, entities_not_allowed}, _, _, _}},
+                parse_xml("<!DOCTYPE x [<!ENTITY e \"a\">]><x>&e;</x>")).
+
+load_metadata_external_dtd_test() ->
+    start_ets(),
+    Url = serve_once(?EXTERNAL_DTD_XML),
+    ?assertExit({fatal, {{error_fetching_DTD, _}, _, _, _}}, load_metadata(Url)).
+
+load_metadata_fingerprints_external_dtd_test() ->
+    start_ets(),
+    Url = serve_once(?EXTERNAL_DTD_XML),
+    ?assertExit({fatal, {{error_fetching_DTD, _}, _, _, _}}, load_metadata(Url, [])).
+
+%% Answers one HTTP request with Body, and returns the URL.
+serve_once(Body) ->
+    {ok, _} = application:ensure_all_started(inets),
+    {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}, {ip, {127, 0, 0, 1}}]),
+    {ok, Port} = inet:port(Listen),
+    spawn_link(fun() ->
+        {ok, Socket} = gen_tcp:accept(Listen),
+        {ok, _Request} = gen_tcp:recv(Socket, 0),
+        ok = gen_tcp:send(Socket, ["HTTP/1.1 200 OK\r\nContent-Length: ",
+                                   integer_to_list(iolist_size(Body)),
+                                   "\r\nConnection: close\r\n\r\n", Body]),
+        gen_tcp:close(Socket),
+        gen_tcp:close(Listen)
+    end),
+    "http://127.0.0.1:" ++ integer_to_list(Port) ++ "/metadata".
 
 -include("xmerl_xpath_macros.hrl").
 
