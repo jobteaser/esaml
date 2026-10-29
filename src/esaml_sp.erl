@@ -319,7 +319,7 @@ decrypt_assertion(Xml, #esaml_sp{key = PrivateKey}) ->
     SymmetricKey = decrypt_key_info(EncryptedData, PrivateKey),
     [#xmlAttribute{value = Algorithm}] = xmerl_xpath:string("./xenc:EncryptionMethod/@Algorithm", EncryptedData, [{namespace, XencNs}]),
     AssertionXml = block_decrypt(Algorithm, SymmetricKey, CipherValue),
-    {Assertion, _} = xmerl_scan:string(AssertionXml, [{namespace_conformant, true}]),
+    Assertion = esaml_util:parse_xml(AssertionXml),
     Assertion.
 
 
@@ -369,5 +369,32 @@ block_decrypt("http://www.w3.org/2001/04/xmlenc#aes256-cbc", SymmetricKey, Ciphe
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+
+decrypt_assertion_external_dtd_test() ->
+    esaml_util:start_ets(),
+    Key = esaml_util:load_private_key("test/selfsigned_key.pem"),
+    #'RSAPrivateKey'{modulus = N, publicExponent = E} = Key,
+    AssertionXml = <<"<!DOCTYPE saml:Assertion SYSTEM \"/dev/null\">"
+                     "<saml:Assertion xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\"/>">>,
+    SymmetricKey = crypto:strong_rand_bytes(16),
+    IV = crypto:strong_rand_bytes(12),
+    {CipherText, Tag} = crypto:crypto_one_time_aead(aes_128_gcm, SymmetricKey, IV, AssertionXml, <<>>, true),
+    EncryptedKey = public_key:encrypt_public(SymmetricKey, #'RSAPublicKey'{modulus = N, publicExponent = E},
+                                             [{rsa_padding, rsa_pkcs1_oaep_padding}]),
+    Xml = lists:flatten([
+        "<saml:EncryptedAssertion xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\">",
+        "<xenc:EncryptedData xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\">",
+        "<xenc:EncryptionMethod Algorithm=\"http://www.w3.org/2009/xmlenc11#aes128-gcm\"/>",
+        "<ds:KeyInfo xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><xenc:EncryptedKey>",
+        "<xenc:EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\"/>",
+        "<xenc:CipherData><xenc:CipherValue>", base64:encode_to_string(EncryptedKey), "</xenc:CipherValue></xenc:CipherData>",
+        "</xenc:EncryptedKey></ds:KeyInfo>",
+        "<xenc:CipherData><xenc:CipherValue>",
+        base64:encode_to_string(<<IV/binary, CipherText/binary, Tag/binary>>),
+        "</xenc:CipherValue></xenc:CipherData>",
+        "</xenc:EncryptedData></saml:EncryptedAssertion>"]),
+    {EncryptedAssertion, _} = xmerl_scan:string(Xml, [{namespace_conformant, true}]),
+    ?assertExit({fatal, {{error_fetching_DTD, _}, _, _, _}},
+                decrypt_assertion(EncryptedAssertion, #esaml_sp{key = Key})).
 
 -endif.
